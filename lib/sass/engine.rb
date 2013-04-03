@@ -316,12 +316,12 @@ module Sass
     end
 
     def _retrieve_rendered
-      return nil unless @options[:cache] && @options[:cache_store] 
+      return nil unless @options[:cache] && @options[:cache_store] && @options[:sha_cache]
       @options[:cache_store].retrieve(_rendered_cache_key, _rendered_cache_key)
     end
 
     def _store_rendered(rendered)
-      if @options[:cache] && @options[:cache_store] 
+      if @options[:cache] && @options[:cache_store] && @options[:sha_cache]
         @options[:cache_store].store(_rendered_cache_key, _rendered_cache_key, rendered)
       end
     end
