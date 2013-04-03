@@ -311,8 +311,25 @@ module Sass
 
     private
 
+    def _rendered_cache_key
+      @_rendered_cache_key ||= "rendered_#{Digest::SHA1.hexdigest(@template)}"
+    end
+
+    def _retrieve_rendered
+      return nil unless @options[:cache] && @options[:cache_store] 
+      @options[:cache_store].retrieve(_rendered_cache_key, _rendered_cache_key)
+    end
+
+    def _store_rendered(rendered)
+      if @options[:cache] && @options[:cache_store] 
+        @options[:cache_store].store(_rendered_cache_key, _rendered_cache_key, rendered)
+      end
+    end
+
     def _render
-      rendered = _to_tree.render
+      rendered = _retrieve_rendered
+      rendered ||= _to_tree.render
+      _store_rendered(rendered)
       return rendered if ruby1_8?
       begin
         # Try to convert the result to the original encoding,
