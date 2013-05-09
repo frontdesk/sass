@@ -348,8 +348,10 @@ module Sass
         sha = Digest::SHA1.hexdigest(@template)
 
         if root = @options[:cache_store].retrieve(key, sha)
-          root.options = @options
-          return root
+          if root.respond_to? :options
+            root.options = @options
+            return root
+          end
         end
       end
 
