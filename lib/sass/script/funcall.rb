@@ -54,12 +54,18 @@ module Sass
 
       # @see Node#to_sass
       def to_sass(opts = {})
-        args = @args.map {|a| a.to_sass(opts)}.join(', ')
+        arg_to_sass = lambda do |arg|
+          sass = arg.to_sass(opts)
+          sass = "(#{sass})" if arg.is_a?(Sass::Script::List) && arg.separator == :comma
+          sass
+        end
+
+        args = @args.map(&arg_to_sass).join(', ')
         keywords = Sass::Util.hash_to_a(@keywords).
-          map {|k, v| "$#{dasherize(k, opts)}: #{v.to_sass(opts)}"}.join(', ')
+          map {|k, v| "$#{dasherize(k, opts)}: #{arg_to_sass[v]}"}.join(', ')
         if self.splat
           splat = (args.empty? && keywords.empty?) ? "" : ", "
-          splat = "#{splat}#{self.splat.inspect}..."
+          splat = "#{splat}#{arg_to_sass[self.splat]}..."
         end
         "#{dasherize(name, opts)}(#{args}#{', ' unless args.empty? || keywords.empty?}#{keywords}#{splat})"
       end
@@ -103,7 +109,8 @@ module Sass
         unless Functions.callable?(ruby_name)
           opts(to_literal(args))
         else
-          opts(Functions::EvaluationContext.new(environment.options).send(ruby_name, *args))
+          local_environment = Environment.new(environment.global_env, environment.options)
+          opts(Functions::EvaluationContext.new(local_environment).send(ruby_name, *args))
         end
       rescue ArgumentError => e
         message = e.message

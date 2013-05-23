@@ -3,6 +3,7 @@ require 'set'
 require 'enumerator'
 require 'stringio'
 require 'rbconfig'
+require 'uri'
 
 require 'sass/root'
 require 'sass/util/subset_map'
@@ -849,6 +850,100 @@ MSG
       inject_values(str, vals)
     end
 
+    # Builds a sourcemap file name given the generated CSS file name.
+    #
+    # @param css [String] The generated CSS file name.
+    # @return [String] The source map file name.
+    def sourcemap_name(css)
+      css + ".map"
+    end
+
+    # Escapes certain characters so that the result can be used
+    # as the JSON string value. Returns the original string if
+    # no escaping is necessary.
+    #
+    # @param s [String] The string to be escaped
+    # @return [String] The escaped string
+    def json_escape_string(s)
+      return s if s !~ /["\\\b\f\n\r\t]/
+
+      result = ""
+      s.split("").each do |c|
+        case c
+        when '"', "\\"
+          result << "\\" << c
+        when "\n" then result << "\\n"
+        when "\t" then result << "\\t"
+        when "\r" then result << "\\r"
+        when "\f" then result << "\\f"
+        when "\b" then result << "\\b"
+        else
+          result << c
+        end
+      end
+      result
+    end
+
+    # Converts the argument into a valid JSON value.
+    #
+    # @param v [Fixnum, String, Array, Boolean, nil]
+    # @return [String]
+    def json_value_of(v)
+      case v
+      when Fixnum
+        v.to_s
+      when String
+        "\"" + json_escape_string(v) + "\""
+      when Array
+        "[" + v.map {|x| json_value_of(x)}.join(",") + "]"
+      when NilClass
+        "null"
+      when TrueClass
+        "true"
+      when FalseClass
+        "false"
+      else
+        raise ArgumentError.new("Unknown type: #{v.class.name}")
+      end
+    end
+
+    VLQ_BASE_SHIFT = 5
+    VLQ_BASE = 1 << VLQ_BASE_SHIFT
+    VLQ_BASE_MASK = VLQ_BASE - 1
+    VLQ_CONTINUATION_BIT = VLQ_BASE
+
+    BASE64_DIGITS = ('A'..'Z').to_a  + ('a'..'z').to_a + ('0'..'9').to_a  + ['+', '/']
+    BASE64_DIGIT_MAP = begin
+      map = {}
+      Sass::Util.enum_with_index(BASE64_DIGITS).map do |digit, i|
+        map[digit] = i
+      end
+      map
+    end
+
+    # Encodes `value` as VLQ (http://en.wikipedia.org/wiki/VLQ).
+    #
+    # @param value [Fixnum]
+    # @return [String] The encoded value
+    def encode_vlq(value)
+      if value < 0
+        value = ((-value) << 1) | 1
+      else
+        value <<= 1
+      end
+
+      result = String.new
+      begin
+        digit = value & VLQ_BASE_MASK
+        value >>= VLQ_BASE_SHIFT
+        if value > 0
+          digit |= VLQ_CONTINUATION_BIT
+        end
+        result << BASE64_DIGITS[digit]
+      end while value > 0
+      result
+    end
+
     ## Static Method Stuff
 
     # The context in which the ERB for \{#def\_static\_method} will be run.
@@ -866,6 +961,15 @@ MSG
         super unless args.empty? && block.nil?
         @set.include?(name)
       end
+    end
+
+
+    URI_ESCAPE = URI.const_defined?(:DEFAULT_PARSER) ?
+                   URI::DEFAULT_PARSER :
+                   URI
+
+    def escape_uri(uri)
+      URI_ESCAPE.escape uri
     end
 
     private

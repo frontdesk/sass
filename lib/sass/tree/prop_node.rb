@@ -1,5 +1,5 @@
 module Sass::Tree
-  # A static node reprenting a CSS property.
+  # A static node representing a CSS property.
   #
   # @see Sass::Tree
   class PropNode < Node
@@ -41,6 +41,16 @@ module Sass::Tree
     #
     # @return [Fixnum]
     attr_accessor :tabs
+
+    # The source range in which the property name appears.
+    #
+    # @return [Sass::Source::Range]
+    attr_accessor :name_source_range
+
+    # The source range in which the property value appears.
+    #
+    # @return [Sass::Source::Range]
+    attr_accessor :value_source_range
 
     # @param name [Array<String, Sass::Script::Node>] See \{#name}
     # @param value [Sass::Script::Node] See \{#value}

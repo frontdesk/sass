@@ -3,7 +3,7 @@ class Sass::Tree::Visitors::Perform < Sass::Tree::Visitors::Base
   # @param root [Tree::Node] The root node of the tree to visit.
   # @param environment [Sass::Environment] The lexical environment.
   # @return [Tree::Node] The resulting tree of static nodes.
-  def self.visit(root, environment = Sass::Environment.new)
+  def self.visit(root, environment = nil)
     new(environment).send(:visit, root)
   end
 
@@ -166,7 +166,8 @@ class Sass::Tree::Visitors::Perform < Sass::Tree::Visitors::Base
   # Runs SassScript interpolation in the selector,
   # and then parses the result into a {Sass::Selector::CommaSequence}.
   def visit_extend(node)
-    parser = Sass::SCSS::StaticParser.new(run_interp(node.selector), node.filename, node.line)
+    parser = Sass::SCSS::StaticParser.new(run_interp(node.selector),
+      node.filename, node.options[:importer], node.line)
     node.resolved_selector = parser.parse_selector
     node
   end
@@ -215,7 +216,9 @@ class Sass::Tree::Visitors::Perform < Sass::Tree::Visitors::Base
   # or parses and includes the imported Sass file.
   def visit_import(node)
     if path = node.css_import?
-      return Sass::Tree::CssImportNode.resolved("url(#{path})")
+      resolved_node = Sass::Tree::CssImportNode.resolved("url(#{path})")
+      resolved_node.source_range = node.source_range
+      return resolved_node
     end
     file = node.imported_file
     handle_import_loop!(node) if @stack.any? {|e| e[:filename] == file.options[:filename]}
@@ -297,6 +300,7 @@ class Sass::Tree::Visitors::Perform < Sass::Tree::Visitors::Base
     node.resolved_name = run_interp(node.name)
     val = node.value.perform(@environment)
     node.resolved_value = val.to_s
+    node.value_source_range = val.source_range if val.source_range
     yield
   end
 
@@ -310,7 +314,8 @@ class Sass::Tree::Visitors::Perform < Sass::Tree::Visitors::Base
   def visit_rule(node)
     rule = node.rule
     rule = rule.map {|e| e.is_a?(String) && e != ' ' ? e.strip : e} if node.style == :compressed
-    parser = Sass::SCSS::StaticParser.new(run_interp(node.rule), node.filename, node.line)
+    parser = Sass::SCSS::StaticParser.new(run_interp(node.rule),
+      node.filename, node.options[:importer], node.line)
     node.parsed_rules ||= parser.parse_selector
     if node.options[:trace_selectors]
       @stack.push(:filename => node.filename, :line => node.line)
@@ -325,6 +330,11 @@ class Sass::Tree::Visitors::Perform < Sass::Tree::Visitors::Base
     var = @environment.var(node.name)
     return [] if node.guarded && var && !var.null?
     val = node.expr.perform(@environment)
+    if node.expr.source_range
+      val.source_range = node.expr.source_range
+    else
+      val.source_range = node.source_range
+    end
     @environment.set_var(node.name, val)
     []
   end
@@ -357,7 +367,8 @@ class Sass::Tree::Visitors::Perform < Sass::Tree::Visitors::Base
   end
 
   def visit_media(node)
-    parser = Sass::SCSS::StaticParser.new(run_interp(node.query), node.filename, node.line)
+    parser = Sass::SCSS::StaticParser.new(run_interp(node.query),
+      node.filename, node.options[:importer], node.line)
     node.resolved_query ||= parser.parse_media_query_list
     yield
   end
@@ -371,7 +382,8 @@ class Sass::Tree::Visitors::Perform < Sass::Tree::Visitors::Base
   def visit_cssimport(node)
     node.resolved_uri = run_interp([node.uri])
     if node.query
-      parser = Sass::SCSS::StaticParser.new(run_interp(node.query), node.filename, node.line)
+      parser = Sass::SCSS::StaticParser.new(run_interp(node.query),
+        node.filename, node.options[:importer], node.line)
       node.resolved_query ||= parser.parse_media_query_list
     end
     yield
@@ -421,7 +433,7 @@ class Sass::Tree::Visitors::Perform < Sass::Tree::Visitors::Base
       end
     end
 
-    return if mixins.empty?
+    return unless mixins.include?(node.name)
     raise Sass::SyntaxError.new("#{msg} #{node.name} includes itself") if mixins.size == 1
 
     msg << "\n" << Sass::Util.enum_cons(mixins.reverse + [node.name], 2).map do |m1, m2|

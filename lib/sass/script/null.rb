@@ -1,5 +1,3 @@
-require 'sass/script/literal'
-
 module Sass::Script
   # A SassScript object representing a null value.
   class Null < Literal
@@ -22,7 +20,10 @@ module Sass::Script
     def to_s(opts = {})
       ''
     end
-    alias_method :to_sass, :to_s
+
+    def to_sass(opts = {})
+      'null'
+    end
 
     # Returns a string representing a null value.
     #

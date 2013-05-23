@@ -1,5 +1,3 @@
-require 'sass/script/literal'
-
 module Sass::Script
   # A SassScript object representing a CSS string *or* a CSS identifier.
   class String < Literal
@@ -33,7 +31,7 @@ module Sass::Script
     # @see Node#to_s
     def to_s(opts = {})
       if @type == :identifier
-        return @value.gsub(/\s+/, " ")
+        return @value.gsub(/\n\s*/, " ")
       end
 
       return "\"#{value.gsub('"', "\\\"")}\"" if opts[:quote] == %q{"}

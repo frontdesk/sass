@@ -11,6 +11,19 @@ module Sass::Script::Functions::UserFunctions
   def option(name)
     Sass::Script::String.new(@options[name.value.to_sym].to_s)
   end
+
+  def set_a_variable(name, value)
+    environment.set_var(name.value, value)
+    return Sass::Script::Null.new
+  end
+
+  def get_a_variable(name)
+    environment.var(name.value) || Sass::Script::String.new("undefined")
+  end
+end
+
+module Sass::Script::Functions
+  include Sass::Script::Functions::UserFunctions
 end
 
 class SassEngineTest < Test::Unit::TestCase
@@ -219,42 +232,30 @@ MSG
   end
 
   def test_import_same_name_different_ext
-    assert_warning <<WARNING do
-WARNING: On line 1 of test_import_same_name_different_ext_inline.sass:
-  It's not clear which file to import for '@import "same_name_different_ext"'.
-  Candidates:
-    same_name_different_ext.sass
-    same_name_different_ext.scss
-  For now I'll choose same_name_different_ext.sass.
-  This will be an error in future versions of Sass.
-WARNING
+    assert_raise_message Sass::SyntaxError, <<ERROR do
+It's not clear which file to import for '@import "same_name_different_ext"'.
+Candidates:
+  same_name_different_ext.sass
+  same_name_different_ext.scss
+Please delete or rename all but one of these files.
+ERROR
       options = {:load_paths => [File.dirname(__FILE__) + '/templates/']}
       munge_filename options
-      result = Sass::Engine.new("@import 'same_name_different_ext'", options).render
-      assert_equal(<<CSS, result)
-.foo {
-  ext: sass; }
-CSS
+      Sass::Engine.new("@import 'same_name_different_ext'", options).render
     end
   end
 
   def test_import_same_name_different_partiality
-    assert_warning <<WARNING do
-WARNING: On line 1 of test_import_same_name_different_partiality_inline.sass:
-  It's not clear which file to import for '@import "same_name_different_partiality"'.
-  Candidates:
-    _same_name_different_partiality.scss
-    same_name_different_partiality.scss
-  For now I'll choose _same_name_different_partiality.scss.
-  This will be an error in future versions of Sass.
-WARNING
+    assert_raise_message Sass::SyntaxError, <<ERROR do
+It's not clear which file to import for '@import "same_name_different_partiality"'.
+Candidates:
+  _same_name_different_partiality.scss
+  same_name_different_partiality.scss
+Please delete or rename all but one of these files.
+ERROR
       options = {:load_paths => [File.dirname(__FILE__) + '/templates/']}
       munge_filename options
-      result = Sass::Engine.new("@import 'same_name_different_partiality'", options).render
-      assert_equal(<<CSS, result)
-.foo {
-  partial: yes; }
-CSS
+      Sass::Engine.new("@import 'same_name_different_partiality'", options).render
     end
   end
 
@@ -521,6 +522,21 @@ MESSAGE
     assert_hash_has(err.sass_backtrace[0], :mixin => "baz", :line => 8)
     assert_hash_has(err.sass_backtrace[1], :mixin => "bar", :line => 5)
     assert_hash_has(err.sass_backtrace[2], :mixin => "foo", :line => 2)
+  end
+
+  def test_mixin_loop_with_content
+    render <<SASS
+=foo
+  @content
+=bar
+  +foo
+    +bar
++bar
+SASS
+    assert(false, "Exception not raised")
+  rescue Sass::SyntaxError => err
+    assert_equal("An @include loop has been found: bar includes itself", err.message)
+    assert_hash_has(err.sass_backtrace[0], :mixin => "@content", :line => 5)
   end
 
   def test_basic_import_loop_exception
@@ -1409,6 +1425,44 @@ CSS
 
 bar
   a: foo(1, 2)
+SASS
+  end
+
+  def test_user_defined_function_variable_scope
+    render(<<SASS)
+bar
+  -no-op: set-a-variable(variable, 5)
+  a: $variable
+SASS
+    flunk("Exception not raised for test_user_defined_function_variable_scope")
+  rescue Sass::SyntaxError => e
+    assert_equal('Undefined variable: "$variable".', e.message)
+  end
+
+  def test_user_defined_function_can_change_global_variable
+    assert_equal(<<CSS, render(<<SASS))
+bar {
+  a: 5; }
+CSS
+$variable: 0
+bar
+  $local: 10
+  -no-op: set-a-variable(variable, 5)
+  a: $variable
+SASS
+  end
+
+  def test_user_defined_function_cannot_read_local_variable
+    assert_equal(<<CSS, render(<<SASS))
+bar {
+  global: 0;
+  local: undefined; }
+CSS
+$global: 0
+bar
+  $local: 10
+  global: get-a-variable(global)
+  local: get-a-variable(local)
 SASS
   end
 
@@ -2381,6 +2435,37 @@ SASS
 
   # Regression tests
 
+  def test_list_separator_with_arg_list
+    assert_equal(<<CSS, render(<<SASS))
+.test {
+  separator: comma; }
+CSS
+@mixin arglist-test($args...)
+  separator: list-separator($args)
+
+.test
+  @include arglist-test(this, is, comma, separated)
+SASS
+  end
+
+  def test_parent_mixin_in_content_nested
+    assert_equal(<<CSS, render(<<SASS))
+a {
+  b: c; }
+CSS
+=foo
+  @content
+
+=bar
+  +foo
+    +foo
+      a
+        b: c
+
++bar
+SASS
+  end
+
   def test_supports_bubbles
     assert_equal <<CSS, render(<<SASS)
 parent {
@@ -2944,12 +3029,6 @@ SCSS
 
     assert_equal original_filename, engine.options[:original_filename]
     assert_equal original_filename, importer.engine("imported").options[:original_filename]
-  end
-
-  def test_deprecated_PRECISION
-    assert_warning(<<END) {assert_equal 100_000.0, Sass::Script::Number::PRECISION}
-Sass::Script::Number::PRECISION is deprecated and will be removed in a future release. Use Sass::Script::Number.precision_factor instead.
-END
   end
 
   def test_changing_precision

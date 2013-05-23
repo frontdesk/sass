@@ -12,11 +12,18 @@ module Sass
         @lexer.line
       end
 
+      # The column number of the parser's current position.
+      #
+      # @return [Fixnum]
+      def offset
+        @lexer.offset
+      end
+
       # @param str [String, StringScanner] The source text to parse
       # @param line [Fixnum] The line on which the SassScript appears.
-      #   Used for error reporting
-      # @param offset [Fixnum] The number of characters in on which the SassScript appears.
-      #   Used for error reporting
+      #   Used for error reporting and sourcemap building
+      # @param offset [Fixnum] The character (not byte) offset in the line on which the SassScript appears.
+      #   Used for error reporting and sourcemap building
       # @param options [{Symbol => Object}] An options hash;
       #   see {file:SASS_REFERENCE.md#sass_options the Sass options documentation}
       def initialize(str, line, offset, options = {})
@@ -32,9 +39,11 @@ module Sass
       # @return [Script::Node] The root node of the parse tree
       # @raise [Sass::SyntaxError] if the expression isn't valid SassScript
       def parse_interpolated
+        start_pos = source_position
         expr = assert_expr :expr
         assert_tok :end_interpolation
         expr.options = @options
+        expr.source_range = range(start_pos)
         expr
       rescue Sass::SyntaxError => e
         e.modify_backtrace :line => @lexer.line, :filename => @options[:filename]
@@ -46,9 +55,11 @@ module Sass
       # @return [Script::Node] The root node of the parse tree
       # @raise [Sass::SyntaxError] if the expression isn't valid SassScript
       def parse
+        start_pos = source_position
         expr = assert_expr :expr
         assert_done
         expr.options = @options
+        expr.source_range = range(start_pos)
         expr
       rescue Sass::SyntaxError => e
         e.modify_backtrace :line => @lexer.line, :filename => @options[:filename]
@@ -213,9 +224,10 @@ module Sass
                   return other_interp
                 end
 
-                line = @lexer.line
+                start_pos = source_position
                 e = Operation.new(e, assert_expr(#{sub.inspect}), tok.type)
-                e.line = line
+                e.line = start_pos.line
+                e.source_range = range(start_pos)
               end
               e
             end
@@ -238,22 +250,34 @@ RUBY
 
       private
 
+      def source_position
+        Sass::Source::Position.new(line, offset)
+      end
+
+      def token_start_position(token)
+        Sass::Source::Position.new(token.line, token.offset)
+      end
+
+      def range(start_pos, end_pos=source_position)
+        Sass::Source::Range.new(start_pos, end_pos, @options[:filename], @options[:importer])
+      end
+
       # @private
       def lexer_class; Lexer; end
 
       def expr
         interp = try_ops_after_interp([:comma], :expr) and return interp
-        line = @lexer.line
+        start_pos = source_position
         return unless e = interpolation
-        arr = [e]
+        list = node(List.new([e], :comma), start_pos)
         while tok = try_tok(:comma)
-          if interp = try_op_before_interp(tok, e)
+          if interp = try_op_before_interp(tok, list)
             return interp unless other_interp = try_ops_after_interp([:comma], :expr, interp)
             return other_interp
           end
-          arr << assert_expr(:interpolation)
+          list.value << assert_expr(:interpolation)
         end
-        arr.size == 1 ? arr.first : node(List.new(arr, :comma), line)
+        list.value.size == 1 ? list.value.first : list
       end
 
       production :equals, :interpolation, :single_eq
@@ -276,8 +300,10 @@ RUBY
         wa = @lexer.whitespace?
         str = Script::String.new(Lexer::OPERATORS_REVERSE[op.type])
         str.line = @lexer.line
+        start_pos = source_position
         interp = Script::Interpolation.new(prev, str, assert_expr(name), !:wb, wa, :originally_text)
         interp.line = @lexer.line
+        interp.source_range = range(start_pos)
         return interp
       end
 
@@ -295,13 +321,13 @@ RUBY
       end
 
       def space
-        line = @lexer.line
+        start_pos = source_position
         return unless e = or_expr
         arr = [e]
         while e = or_expr
           arr << e
         end
-        arr.size == 1 ? arr.first : node(List.new(arr, :space), line)
+        arr.size == 1 ? arr.first : node(List.new(arr, :space), start_pos)
       end
 
       production :or_expr, :and_expr, :or
@@ -322,16 +348,16 @@ RUBY
 
         name = @lexer.next
         if color = Color::COLOR_NAMES[name.value.downcase]
-          return node(Color.new(color))
+          return node(Color.new(color), token_start_position(name), source_position)
         end
-        node(Script::String.new(name.value, :identifier))
+        node(Script::String.new(name.value, :identifier), token_start_position(name), source_position)
       end
 
       def funcall
         return raw unless tok = try_tok(:funcall)
         args, keywords, splat = fn_arglist || [[], {}]
         assert_tok(:rparen)
-        node(Script::Funcall.new(tok.value, args, keywords, splat))
+        node(Script::Funcall.new(tok.value, args, keywords, splat), token_start_position(tok), source_position)
       end
 
       def defn_arglist!(must_have_parens)
@@ -348,6 +374,7 @@ RUBY
         loop do
           c = assert_tok(:const)
           var = Script::Variable.new(c.value)
+          var.source_range = range(c.offset)
           if try_tok(:colon)
             val = assert_expr(:space)
             must_have_default = true
@@ -422,27 +449,30 @@ RUBY
         return variable unless try_tok(:lparen)
         was_in_parens = @in_parens
         @in_parens = true
-        line = @lexer.line
+        start_pos = source_position
         e = expr
         assert_tok(:rparen)
-        return e || node(List.new([], :space), line)
+        return e || node(List.new([], :space), start_pos)
       ensure
         @in_parens = was_in_parens
       end
 
       def variable
+        start_pos = source_position
         return string unless c = try_tok(:const)
-        node(Variable.new(*c.value))
+        node(Variable.new(*c.value), start_pos, source_position)
       end
 
       def string
         return number unless first = try_tok(:string)
         return first.value unless try_tok(:begin_interpolation)
+        start_pos = source_position
         line = @lexer.line
         mid = parse_interpolated
         last = assert_expr(:string)
         interp = StringInterpolation.new(first.value, mid, last)
         interp.line = line
+        interp.source_range = range(start_pos)
         interp
       end
 
@@ -487,8 +517,10 @@ RUBY
         @lexer.expected!(EXPR_NAMES[:default])
       end
 
-      def node(node, line = @lexer.line)
-        node.line = line
+      def node(node, start_pos = source_position, end_pos = nil)
+        node.line = start_pos.line
+        node.filename = @options[:filename]
+        node.source_range = range(start_pos, end_pos) if end_pos
         node
       end
     end

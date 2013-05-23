@@ -33,6 +33,10 @@ module Sass::Script::Functions::UserFunctions
   def _preceding_underscore
     Sass::Script::String.new("I'm another user-defined string!")
   end
+
+  def fetch_the_variable
+    environment.var('variable')
+  end
 end
 
 module Sass::Script::Functions
@@ -691,9 +695,9 @@ class SassFunctionTest < Test::Unit::TestCase
       "scale-color(blue, $alpha: -101%)")
 
     # Unit
-    assert_error_message("$saturation: Amount 80 must be a % (e.g. 80%) for `scale-color'",
+    assert_error_message("Expected $saturation to have a unit of % but got 80 for `scale-color'",
       "scale-color(blue, $saturation: 80)")
-    assert_error_message("$alpha: Amount 0.5 must be a % (e.g. 0.5%) for `scale-color'",
+    assert_error_message("Expected $alpha to have a unit of % but got 0.5 for `scale-color'",
       "scale-color(blue, $alpha: 0.5)")
 
     # Unknown argument
@@ -864,6 +868,82 @@ class SassFunctionTest < Test::Unit::TestCase
     assert_error_message("#ff0000 is not a string for `quote'", "quote(#f00)")
   end
 
+  def test_str_length
+    assert_equal('3', evaluate('str-length(foo)'))
+  end
+
+  def test_str_length_requires_a_string
+    assert_error_message("#ff0000 is not a string for `str-length'", "str-length(#f00)")
+  end
+
+  def test_str_insert
+    assert_equal('Xabcd', evaluate('str-insert(abcd, X, 0)'))
+    assert_equal('Xabcd', evaluate('str-insert(abcd, X, 1)'))
+    assert_equal('abcXd', evaluate('str-insert(abcd, X, 4)'))
+    assert_equal('abcdX', evaluate('str-insert(abcd, X, 100)'))
+    assert_equal('Xabcd', evaluate('str-insert(abcd, X, -100)'))
+    assert_equal('aXbcd', evaluate('str-insert(abcd, X, -4)'))
+    assert_equal('abcdX', evaluate('str-insert(abcd, X, -1)'))
+  end
+
+  def test_str_insert_maintains_quote_of_primary_string
+    assert_equal('"Xfoo"', evaluate('str-insert("foo", X, 1)'))
+    assert_equal('"Xfoo"', evaluate('str-insert("foo", "X", 1)'))
+    assert_equal('Xfoo', evaluate('str-insert(foo, "X", 1)'))
+  end
+
+  def test_str_insert_asserts_types
+    assert_error_message("$original: #ff0000 is not a string for `str-insert'", "str-insert(#f00, X, 1)")
+    assert_error_message("$insert: #ff0000 is not a string for `str-insert'", "str-insert(foo, #f00, 1)")
+    assert_error_message("$index: #ff0000 is not a number for `str-insert'", "str-insert(foo, X, #f00)")
+    assert_error_message("Expected $index to be unitless but got 10px for `str-insert'", "str-insert(foo, X, 10px)")
+  end
+
+  def test_str_index
+    assert_equal('1', evaluate('str-index(abcd, a)'))
+    assert_equal('1', evaluate('str-index(abcd, ab)'))
+    assert_equal('0', evaluate('str-index(abcd, X)'))
+    assert_equal('3', evaluate('str-index(abcd, c)'))
+  end
+
+  def test_str_index_asserts_types
+    assert_error_message("#ff0000 is not a string for `str-index'", "str-index(#f00, X)")
+    assert_error_message("#ff0000 is not a string for `str-index'", "str-index(asdf, #f00)")
+  end
+
+  def test_to_lower_case
+    assert_equal('abcd', evaluate('to-lower-case(ABCD)'))
+    assert_equal('"abcd"', evaluate('to-lower-case("ABCD")'))
+    assert_error_message("#ff0000 is not a string for `to-lower-case'", "to-lower-case(#f00)")
+  end
+
+  def test_to_upper_case
+    assert_equal('ABCD', evaluate('to-upper-case(abcd)'))
+    assert_equal('"ABCD"', evaluate('to-upper-case("abcd")'))
+    assert_error_message("#ff0000 is not a string for `to-upper-case'", "to-upper-case(#f00)")
+  end
+
+  def test_str_slice
+    assert_equal('bc',   evaluate('str-slice(abcd,2,3)'))    # in the middle of the string
+    assert_equal('a',    evaluate('str-slice(abcd,1,1)'))    # when start = end
+    assert_equal('ab',   evaluate('str-slice(abcd,1,2)'))    # for completeness
+    assert_equal('abcd', evaluate('str-slice(abcd,1,4)'))    # at the end points
+    assert_equal('abcd', evaluate('str-slice(abcd,0,4)'))    # when start is before the start of the string
+    assert_equal('abcd', evaluate('str-slice(abcd,1,100)'))  # when end is past the end of the string
+    assert_equal('',     evaluate('str-slice(abcd,2,1)'))    # when end is before start
+    assert_equal('"bc"', evaluate('str-slice("abcd",2,3)'))  # when used with a quoted string
+    assert_equal('bcd',  evaluate('str-slice(abcd,2)'))      # when end is omitted, you get the remainder of the string
+    assert_equal('cd',   evaluate('str-slice(abcd,-2)'))     # when start is negative, it counts from the beginning
+    assert_equal('bc',   evaluate('str-slice(abcd,2,-2)'))   # when end is negative it counts in from the end
+    assert_equal('',     evaluate('str-slice(abcd,3,-3)'))   # when end is negative and comes before the start
+    assert_equal('bc',   evaluate('str-slice(abcd,-3,-2)'))  # when both are negative
+    assert_error_message("#ff0000 is not a string for `str-slice'", "str-slice(#f00,2,3)")
+    assert_error_message("$start-at: #ff0000 is not a number for `str-slice'", "str-slice(abcd,#f00,3)")
+    assert_error_message("$end-at: #ff0000 is not a number for `str-slice'", "str-slice(abcd,2,#f00)")
+    assert_error_message("Expected $end-at to be unitless but got 3px for `str-slice'", "str-slice(abcd,2,3px)")
+    assert_error_message("Expected $start-at to be unitless but got 2px for `str-slice'", "str-slice(abcd,2px,3)")
+  end
+
   def test_user_defined_function
     assert_equal("I'm a user-defined string!", evaluate("user_defined()"))
   end
@@ -871,6 +951,11 @@ class SassFunctionTest < Test::Unit::TestCase
   def test_user_defined_function_with_preceding_underscore
     assert_equal("I'm another user-defined string!", evaluate("_preceding_underscore()"))
     assert_equal("I'm another user-defined string!", evaluate("-preceding-underscore()"))
+  end
+
+  def test_user_defined_function_using_environment
+    environment = env('variable' => Sass::Script::String.new('The variable'))
+    assert_equal("The variable", evaluate("fetch_the_variable()", environment))
   end
 
   def test_options_on_new_literals_fails
@@ -1031,10 +1116,26 @@ MSG
     assert_equal("false", evaluate("index(1px, #00f)"))
   end
 
+  def test_list_separator
+    assert_equal("space", evaluate("list-separator(1 2 3 4 5)"))
+    assert_equal("comma", evaluate("list-separator((foo, bar, baz, bip))"))
+    assert_equal("comma", evaluate("list-separator((foo, bar, baz bip))"))
+    assert_equal("comma", evaluate("list-separator((foo, bar, (baz, bip)))"))
+    assert_equal("space", evaluate("list-separator(#f00)"))
+    assert_equal("space", evaluate("list-separator(())"))
+    assert_equal("space", evaluate("list-separator(1 2 () 3)"))
+  end
+
   def test_if
     assert_equal("1px", evaluate("if(true, 1px, 2px)"))
     assert_equal("2px", evaluate("if(false, 1px, 2px)"))
     assert_equal("2px", evaluate("if(null, 1px, 2px)"))
+  end
+
+  def test_counter
+    assert_equal("counter(foo)", evaluate("counter(foo)"))
+    assert_equal('counter(item,".")', evaluate('counter(item, ".")'))
+    assert_equal('counter(item,".")', evaluate('counter(item,".")'))
   end
 
   def test_keyword_args_rgb
@@ -1096,6 +1197,40 @@ MSG
     assert_equal "only-kw-args(a, b, c)", evaluate("only-kw-args($a: 1, $b: 2, $c: 3)")
   end
 
+  def test_assert_unit
+    ctx = Sass::Script::Functions::EvaluationContext.new(Sass::Environment.new(nil, {}))
+    ctx.assert_unit Sass::Script::Number.new(10, ["px"], []), "px"
+    ctx.assert_unit Sass::Script::Number.new(10, [], []), nil
+
+    begin
+      ctx.assert_unit Sass::Script::Number.new(10, [], []), "px"
+      fail
+    rescue ArgumentError => e
+      assert_equal "Expected 10 to have a unit of px", e.message
+    end
+
+    begin
+      ctx.assert_unit Sass::Script::Number.new(10, ["px"], []), nil
+      fail
+    rescue ArgumentError => e
+      assert_equal "Expected 10px to be unitless", e.message
+    end
+
+    begin
+      ctx.assert_unit Sass::Script::Number.new(10, [], []), "px", "arg"
+      fail
+    rescue ArgumentError => e
+      assert_equal "Expected $arg to have a unit of px but got 10", e.message
+    end
+
+    begin
+      ctx.assert_unit Sass::Script::Number.new(10, ["px"], []), nil, "arg"
+      fail
+    rescue ArgumentError => e
+      assert_equal "Expected $arg to be unitless but got 10px", e.message
+    end
+  end
+
   ## Regression Tests
 
   def test_saturation_bounds
@@ -1103,13 +1238,20 @@ MSG
   end
 
   private
-
-  def evaluate(value)
-    Sass::Script::Parser.parse(value, 0, 0).perform(Sass::Environment.new).to_s
+  def env(hash = {})
+    env = Sass::Environment.new
+    hash.each {|k, v| env.set_var(k, v)}
+    env
   end
 
-  def perform(value)
-    Sass::Script::Parser.parse(value, 0, 0).perform(Sass::Environment.new)
+  def evaluate(value, environment = env)
+    result = perform(value, environment)
+    assert_kind_of Sass::Script::Literal, result
+    return result.to_s
+  end
+
+  def perform(value, environment = env)
+    Sass::Script::Parser.parse(value, 0, 0).perform(environment)
   end
 
   def assert_error_message(message, value)

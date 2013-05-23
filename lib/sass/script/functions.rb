@@ -4,7 +4,7 @@ module Sass::Script
   #
   #     $color = hsl(120deg, 100%, 50%)
   #
-  # and it will call {Sass::Script::Functions#hsl}.
+  # and it will call {Functions#hsl}.
   #
   # The following functions are provided:
   #
@@ -110,6 +110,24 @@ module Sass::Script
   # \{#quote quote($string)}
   # : Adds quotes to a string.
   #
+  # \{#str_length str-length($string)}
+  # : Returns the number of characters in a string.
+  #
+  # \{#str_insert str-insert($string, $insert, $index)}
+  # : Inserts the second string into the first string at the specified index.
+  #
+  # \{#str_index str-index($string, $substring)}
+  # : Returns the index where a substring is found in another string or 0 if not found.
+  #
+  # \{#str_extract str-slice($string, $start, $end)}
+  # : Extracts a substring of characters from $string
+  #
+  # \{#to_upper_case to-upper-case($string)}
+  # : Converts a string to upper case.
+  #
+  # \{#to_lower_case to-lower-case($string)}
+  # : Converts a string to lower case.
+  #
   # ## Number Functions
   #
   # \{#percentage percentage($value)}
@@ -153,6 +171,9 @@ module Sass::Script
   # \{#index index($list, $value)}
   # : Returns the position of a value within a list, or false.
   #
+  # \{#list-separator list-separator(#list)}
+  # : Returns the separator of a list.
+  #
   # ## Introspection Functions
   #
   # \{#type_of type-of($value)}
@@ -190,14 +211,14 @@ module Sass::Script
   # {declare} can also allow your function to take arbitrary keyword arguments.
   #
   # There are a few things to keep in mind when modifying this module.
-  # First of all, the arguments passed are {Sass::Script::Literal} objects.
+  # First of all, the arguments passed are {Literal} objects.
   # Literal objects are also expected to be returned.
   # This means that Ruby values must be unwrapped and wrapped.
   #
-  # Most Literal objects support the {Sass::Script::Literal#value value} accessor
+  # Most Literal objects support the {Literal#value value} accessor
   # for getting their Ruby values.
-  # Color objects, though, must be accessed using {Sass::Script::Color#rgb rgb},
-  # {Sass::Script::Color#red red}, {Sass::Script::Color#blue green}, or {Sass::Script::Color#blue blue}.
+  # Color objects, though, must be accessed using {Color#rgb rgb},
+  # {Color#red red}, {Color#blue green}, or {Color#blue blue}.
   #
   # Second, making Ruby functions accessible from Sass introduces the temptation
   # to do things like database access within stylesheets.
@@ -256,7 +277,7 @@ module Sass::Script
     #   Whether the function accepts other keyword arguments
     #   in addition to those in `:args`.
     #   If this is true, the Ruby function will be passed a hash from strings
-    #   to {Sass::Script::Literal}s as the last argument.
+    #   to {Literal}s as the last argument.
     #   In addition, if this is true and `:var_args` is not,
     #   Sass will ensure that the last argument passed is a hash.
     #
@@ -315,14 +336,21 @@ module Sass::Script
     class EvaluationContext
       include Functions
 
+
+      # The environment of the {Sass::Engine}
+      #
+      # @return [Environment]
+      attr_reader :environment
+
       # The options hash for the {Sass::Engine} that is processing the function call
       #
       # @return [{Symbol => Object}]
       attr_reader :options
 
-      # @param options [{Symbol => Object}] See \{#options}
-      def initialize(options)
-        @options = options
+      # @param environment [Environment] See \{#environment}
+      def initialize(environment)
+        @environment = environment
+        @options = environment.options
       end
 
       # Asserts that the type of a given SassScript value
@@ -335,14 +363,55 @@ module Sass::Script
       # @example
       #   assert_type value, :String
       #   assert_type value, :Number
-      # @param value [Sass::Script::Literal] A SassScript value
+      # @param value [Literal] A SassScript value
       # @param type [Symbol] The name of the type the value is expected to be
       # @param name [String, nil] The name of the argument.
+      # @raise [ArgumentError] if value is not of the correct type.
       def assert_type(value, type, name = nil)
         return if value.is_a?(Sass::Script.const_get(type))
         err = "#{value.inspect} is not a #{type.to_s.downcase}"
         err = "$#{name}: " + err if name
         raise ArgumentError.new(err)
+      end
+
+      # Asserts that the unit of the number is as expected.
+      #
+      # @example
+      #   assert_unit number, "px"
+      #   assert_unit number, nil
+      # @param number [Number] The number to be validated.
+      # @param unit [::String]
+      #   The unit that the number must have.
+      #   If nil, the number must be unitless.
+      # @param name [::String] The name of the parameter being validated.
+      # @raise [ArgumentError] if number is not of the correct unit or is not a number.
+      def assert_unit(number, unit, name = nil)
+        assert_type number, :Number, name
+        return if number.is_unit?(unit)
+        expectation = unit ? "have a unit of #{unit}" : "be unitless"
+        if name
+          raise ArgumentError.new("Expected $#{name} to #{expectation} but got #{number}")
+        else
+          raise ArgumentError.new("Expected #{number} to #{expectation}")
+        end
+      end
+
+      # Asserts that the value is an integer.
+      #
+      # @example
+      #   assert_unit number, "px"
+      #   assert_unit number, nil
+      # @param number [Literal] The literal to be validated.
+      # @param name [::String] The name of the parameter being validated.
+      # @raise [ArgumentError] if number is not an integer or is not a number.
+      def assert_integer(number, name = nil)
+        assert_type number, :Number, name
+        return if number.int?
+        if name
+          raise ArgumentError.new("Expected $#{name} to be an integer but got #{number}")
+        else
+          raise ArgumentError.new("Expected #{number} to be an integer")
+        end
       end
     end
 
@@ -383,11 +452,13 @@ module Sass::Script
 
       Color.new([red, green, blue].map do |c|
           v = c.value
-          if c.numerator_units == ["%"] && c.denominator_units.empty?
+          if c.is_unit?("%")
             v = Sass::Util.check_range("Color value", 0..100, c, '%')
             v * 255 / 100.0
-          else
+          elsif c.unitless?
             Sass::Util.check_range("Color value", 0..255, c)
+          else
+            raise ArgumentError.new("Expected #{c} to be unitless or have a unit of % but got #{c}")
           end
         end)
     end
@@ -880,11 +951,8 @@ module Sass::Script
 
         next unless val = kwargs.delete(name)
         assert_type val, :Number, name
-        if !(val.numerator_units == ['%'] && val.denominator_units.empty?)
-          raise ArgumentError.new("$#{name}: Amount #{val} must be a % (e.g. #{val.value}%)")
-        else
-          Sass::Util.check_range("$#{name}: Amount", -100..100, val, '%')
-        end
+        assert_unit val, '%', name
+        Sass::Util.check_range("$#{name}: Amount", -100..100, val, '%')
 
         current = color.send(name)
         scale = val.value/100.0
@@ -1088,6 +1156,138 @@ module Sass::Script
       Sass::Script::String.new(string.value, :string)
     end
     declare :quote, [:string]
+
+    # Returns the number of characters in a string.
+    #
+    # @return [Number]
+    # @raise [ArgumentError] if `string` isn't a string
+    # @example
+    #   str-length("foo") => 3
+    def str_length(string)
+      assert_type string, :String
+      Sass::Script::Number.new(string.value.size)
+    end
+    declare :str_length, [:string]
+
+    # Inserts a string into another string.
+    #
+    # Inserts the `$insert` string into the `$original` before the character at
+    # the given `$index`.
+    #
+    # @param [String] original The string that will receive the insertion.
+    # @param [String] insert The string that will be inserted.
+    # @param [Number] index
+    #   The position where inserted string will start.
+    #   Negative indices count from the end of the original string.
+    #
+    # @return [String] A new string
+    # @raise [ArgumentError] if `$original` isn't a string, `$insert` isn't a string, or `$index` isn't a number.
+    # @example
+    #   str-insert("abcd", "X", 1) => "Xabcd"
+    #   str-insert("abcd", "X", 4) => "abcXd"
+    #   str-insert("abcd", "X", 100) => "abcdX"
+    #   str-insert("abcd", "X", -100) => "Xabcd"
+    def str_insert(original, insert, index)
+      assert_type original, :String, "original"
+      assert_type insert, :String, "insert"
+      assert_integer index, "index"
+      assert_unit index, nil, "index"
+      insertion_point = index.value > 0 ? [index.value - 1, original.value.size].min : [index.value, -original.value.size - 1].max
+      Sass::Script::String.new(original.value.dup.insert(insertion_point, insert.value), original.type)
+    end
+    declare :str_insert, [:original, :insert, :index]
+
+    # Starting at the left, finds the index of the first location
+    # where `substring` is found in `string`.
+    #
+    # @return [Number] The index of the substring, or 0 if not found.
+    # @raise [ArgumentError] if `original` isn't a string, `insert` isn't a string, or `index` isn't a number.
+    # @param string The string to search
+    # @param substring The string to search for
+    # @example
+    #   str-index(abcd, a)  => 1
+    #   str-index(abcd, ab) => 1
+    #   str-index(abcd, X)  => 0
+    #   str-index(abcd, c)  => 3
+    def str_index(string, substring)
+      assert_type string, :String
+      assert_type substring, :String
+      index = string.value.index(substring.value) || -1
+      Sass::Script::Number.new(index + 1)
+    end
+    declare :str_index, [:string, :substring]
+
+
+    # Slice a substring from `string` from `start-at` index to `end-at` index.
+    #
+    # @return [String] A new string
+    # @param start_at
+    #   The index (inclusive) of the first character to slice out of the string.
+    #   If negative, counts from the end of the string.
+    # @param end_at
+    #   The index (inclusive) of the last character to slice out of the string.
+    # @overload str_slice(string, start_at)
+    #   Slice starting at `start_at` to the end of the string.
+    # @overload str_slice(string, start_at, end_at)
+    #   Slice starting at `start_at` to `end_at`
+    # @raise [ArgumentError] if `string` isn't a string or `start_at` and `end_at` aren't unitless numbers
+    # @example
+    #  str-slice(abcd,    2,   3) => bc
+    #  str-slice(abcd,    2     ) => bcd
+    #  str-slice(abcd,   -2     ) => cd
+    #  str-slice(abcd,    2,  -2) => bc
+    #  str-slice("abcd",  3,  -3) => ""
+    #  str-slice(abcd,    1,   1) => a
+    #  str-slice(abcd,    1,   2) => ab
+    #  str-slice(abcd,    1,   4) => abcd
+    #  str-slice(abcd, -100,   4) => abcd
+    #  str-slice(abcd,    1, 100) => abcd
+    #  str-slice("abcd",  2,   1) => ""
+    #  str-slice("abcd",  2,   3) => "bc"
+    def str_slice(string, start_at, end_at = nil)
+      assert_type string, :String
+      assert_unit start_at, nil, "start-at"
+
+      end_at = Sass::Script::Number.new(-1)if end_at.nil?
+      assert_unit end_at, nil, "end-at"
+
+      s = start_at.value > 0 ? start_at.value - 1 : start_at.value
+      e = end_at.value > 0 ? end_at.value - 1 : end_at.value
+      s = string.value.length + s if s < 0
+      s = 0 if s < 0
+      e = string.value.length + e if e < 0
+      e = 0 if s < 0
+      extracted = string.value.slice(s..e)
+      Sass::Script::String.new(extracted || "", string.type)
+    end
+    declare :str_slice, [:string, :start_at]
+    declare :str_slice, [:string, :start_at, :end_at]
+
+    # Convert a string to upper case
+    #
+    # @return [String]
+    # @raise [ArgumentError] if `string` isn't a string
+    # @example
+    #   to-upper-case(abcd) => ABCD
+    #   to-upper-case("abcd") => "ABCD"
+    def to_upper_case(string)
+      assert_type string, :String
+      Sass::Script::String.new(string.value.upcase, string.type)
+    end
+    declare :to_upper_case, [:string]
+
+    # Convert a string to lower case
+    #
+    # @return [String]
+    # @raise [ArgumentError] if `string` isn't a string
+    # @example
+    #   to-lower-case(ABCD) => abcd
+    #   to-lower-case("ABCD") => "abcd"
+    def to_lower_case(string)
+      assert_type string, :String
+      Sass::Script::String.new(string.value.downcase, string.type)
+    end
+    declare :to_lower_case, [:string]
 
     # Inspects the type of the argument, returning it as an unquoted string.
     #
@@ -1406,6 +1606,22 @@ module Sass::Script
     end
     declare :index, [:list, :value]
 
+    # Returns the separator of the given list.
+    # If not a list, returns false.
+    #
+    # @example
+    #   list-separator(1px 2px 3px) => 'space'
+    #   list-separator(1px, 2px, 3px) => 'comma'
+    #   list-separator('foo') => 'space'
+    def list_separator(list)
+      if list.is_a?(Sass::Script::List)
+        String.new(list.separator.to_s)
+      else
+        String.new('space')
+      end
+    end
+    declare :separator, [:list]
+
     # Returns one of two values based on the truth value of the first argument.
     #
     # @example
@@ -1422,6 +1638,19 @@ module Sass::Script
       end
     end
     declare :if, [:condition, :if_true, :if_false]
+
+    # This function only exists as a workaround for IE7's [`content:counter`
+    # bug][bug]. It works identically to any other plain-CSS function, except it
+    # avoids adding spaces between the argument commas.
+    #
+    # [bug]: http://jes.st/2013/ie7s-css-breaking-content-counter-bug/
+    #
+    # @example
+    #   counter(item, ".") => counter(item,".")
+    def counter(*args)
+      Sass::Script::String.new("counter(#{args.map {|a| a.to_s(options)}.join(',')})")
+    end
+    declare :counter, [], :var_args => true
 
     private
 

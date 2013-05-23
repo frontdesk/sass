@@ -1,5 +1,4 @@
 require 'pathname'
-require 'uri'
 
 module Sass::Tree
   # A static node reprenting a CSS rule.
@@ -44,6 +43,10 @@ module Sass::Tree
     # @return [Fixnum]
     attr_accessor :tabs
 
+    # The entire selector source range for this rule.
+    # @return [Sass::Source::Range]
+    attr_accessor :selector_source_range
+
     # Whether or not this rule is the last rule in a nested group.
     # This is only set in a CSS tree.
     #
@@ -58,10 +61,12 @@ module Sass::Tree
     attr_accessor :stack_trace
 
     # @param rule [Array<String, Sass::Script::Node>]
+    # @param selector_source_range [Sass::Source::Range]
     #   The CSS rule. See \{#rule}
-    def initialize(rule)
+    def initialize(rule, selector_source_range = nil)
       merged = Sass::Util.merge_adjacent_strings(rule)
       @rule = Sass::Util.strip_string_array(merged)
+      @selector_source_range = selector_source_range
       @tabs = 0
       try_to_parse_non_interpolated_rules
       super()
@@ -109,7 +114,7 @@ module Sass::Tree
     #
     # @return [{#to_s => #to_s}]
     def debug_info
-      {:filename => filename && ("file://" + URI.escape(File.expand_path(filename))),
+      {:filename => filename && ("file://" + Sass::Util.escape_uri(File.expand_path(filename))),
        :line => self.line}
     end
 
@@ -124,7 +129,7 @@ module Sass::Tree
       if @rule.all? {|t| t.kind_of?(String)}
         # We don't use real filename/line info because we don't have it yet.
         # When we get it, we'll set it on the parsed rules if possible.
-        parser = Sass::SCSS::StaticParser.new(@rule.join.strip, '', 1)
+        parser = Sass::SCSS::StaticParser.new(@rule.join.strip, '', nil, 1)
         @parsed_rules = parser.parse_selector rescue nil
       end
     end

@@ -134,6 +134,7 @@ class SassScriptTest < Test::Unit::TestCase
     assert_equal '3,7', resolve('#{1 + 2},#{3 + 4}')
     assert_equal '3, 7, 11', resolve('#{1 + 2}, #{3 + 4}, #{5 + 6}')
     assert_equal '3, 7, 11', resolve('3, #{3 + 4}, 11')
+    assert_equal '3, 7, 11', resolve('3, 7, #{5 + 6}')
 
     assert_equal '3 / 7', resolve('3 / #{3 + 4}')
     assert_equal '3 /7', resolve('3 /#{3 + 4}')
@@ -537,11 +538,25 @@ SASS
     assert_equal "and-bang", resolve("and-bang")
   end
 
+  def test_number_initialization
+    assert_equal Sass::Script::Number.new(10, ["px"]), Sass::Script::Number.new(10, "px")
+    assert_equal Sass::Script::Number.new(10, ["px"], ["em"]), Sass::Script::Number.new(10, "px", "em")
+  end
+
+  def test_is_unit
+    assert Sass::Script::Number.new(10, "px").is_unit?("px")
+    assert Sass::Script::Number.new(10).is_unit?(nil)
+    assert !Sass::Script::Number.new(10, "px", "em").is_unit?("px")
+    assert !Sass::Script::Number.new(10, [], "em").is_unit?("em")
+    assert !Sass::Script::Number.new(10, ["px", "em"]).is_unit?("px")
+  end
+
   private
 
   def resolve(str, opts = {}, environment = env)
     munge_filename opts
     val = eval(str, opts, environment)
+    assert_kind_of Sass::Script::Literal, val
     val.is_a?(Sass::Script::String) ? val.value : val.to_s
   end
 
